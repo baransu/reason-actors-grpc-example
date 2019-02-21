@@ -1,0 +1,22 @@
+syntax = "proto3";
+package chat;
+
+enum Urgency {
+  URGENCY_NORMAL = 0;
+  URGENCY_URGENT = 1;
+  URGENCY_RELAXED = 2;
+};
+
+message MessageRequest {
+  string channel = 1;
+  string text = 2;
+  Urgency urgency = 3;
+}
+
+message MessageReply {
+  string error = 1;
+}
+
+service ChatService {
+  rpc SendMessage (MessageRequest) returns (MessageReply) {}
+}

@@ -1,0 +1,8 @@
+{
+  "name": "reason-actors-grpc-example",
+  "sources": ["src", "grpc"],
+  "bs-dependencies": ["reason-nact", "reason-future"],
+  "refmt": 3,
+  "bsc-flags": ["-bs-super-errors"],
+  "ppx-flags": []
+}

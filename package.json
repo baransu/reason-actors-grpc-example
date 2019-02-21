@@ -1,0 +1,19 @@
+{
+  "name": "reason-actors-grpc-example",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "buckle:up": "bsb -clean-world && bsb -make-world -w",
+    "start:client": "node ./lib/js/src/Client.js",
+    "start:server": "node ./lib/js/src/Server.js",
+    "generate": "yarn reasonml-compile-proto chat.proto && mv src/Grpc.re grpc/Grpc.re && mv src/protobufs.js grpc/protobufs.js"
+  },
+  "dependencies": {
+    "bs-grpc": "0.11.0-rc.0",
+    "bs-platform": "^4.0.18",
+    "grpc": "^1.13.0-pre1",
+    "reason-future": "^2.4.0",
+    "reason-nact": "^5.0.0"
+  }
+}
