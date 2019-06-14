@@ -8,6 +8,27 @@ let (<<) = (f, g, x) => f(g(x));
 type grpcClientRpcInvokeError;
 /* simply wraps grpcClientRpcInvokeError when an exception is needed */
 exception GrpcClientRpcInvokeError(grpcClientRpcInvokeError);
+/* protobufjs prefers the `long` package on npm for 64-bit type representation */
+module Long = {
+  type t;
+  [@bs.module "long"] external fromString: string => t = "";
+  [@bs.module "long"] external fromFloat: float => t = "fromNumber";
+  [@bs.module "long"] external fromInt: int => t = "fromNumber";
+  [@bs.module "long"] external fromValue: 'a => t = "";
+  [@bs.send] external toFloat: t => float = "toNumber";
+  [@bs.send] external toString: t => string = "toString";
+};
+
+[@bs.deriving abstract]
+type protobufjsToObjectOptions;
+let myProtobufjsToObjectOptions: protobufjsToObjectOptions = [%bs.raw
+  {|{
+      oneofs: true,
+      defaults: false,
+      keepCase: true,
+      enums: String,
+  }|}
+];
 
 /* "channel credentials" seem to be needed for creating a client */
 type channelCredentials;
@@ -16,7 +37,7 @@ type serverCredentials;
 
 /* protobufjs uses ByteBuffer abstraction over Node Buffer */
 type byteBuffer;
-[@bs.send] external bufferOfByteBuffer: byteBuffer => Node.buffer = "toBuffer";
+[@bs.send] external bufferOfByteBuffer: byteBuffer => Node.buffer = "finish";
 
 /* flatMap an array of Futures */
 let futureFlatMapArray =
@@ -60,8 +81,8 @@ let futureFlatMapArray =
    returns true, starting from element at index n, or None if no such element is
    found */
 let rec arrayFirst = (f, n, a) =>
-  n < Array.length(a) ?
-    f(a[n]) ? Some(a[n]) : arrayFirst(f, n + 1, a) : None;
+  n < Array.length(a)
+    ? f(a[n]) ? Some(a[n]) : arrayFirst(f, n + 1, a) : None;
 
 /* utility eunction; TODO is there a stdlib answer? */
 let optCall = (x, ~f) =>
@@ -92,6 +113,7 @@ module Validation = {
   exception NumberNotPositiveError;
   exception RegexMatchError;
   exception TransFieldError(string);
+  exception EmptyOneof(string);
 
   /* invokes user-supplied function to perform multi-field
    * validation, if such a function is supplied
@@ -246,8 +268,8 @@ module Validation = {
     futureMap(
       fun
       | Belt.Result.Ok(Some(x)) =>
-        x->Array.length < len ?
-          Belt.Result.Error(ArrayTooShortError) : Belt.Result.Ok(Some(x))
+        x->Array.length < len
+          ? Belt.Result.Error(ArrayTooShortError) : Belt.Result.Ok(Some(x))
       | x => x,
     );
   let maxItemCount = (len, x: field(array('a))) =>
@@ -256,8 +278,8 @@ module Validation = {
     futureMap(
       fun
       | Belt.Result.Ok(Some(x)) =>
-        x->Array.length > len ?
-          Belt.Result.Error(ArrayTooShortError) : Belt.Result.Ok(Some(x))
+        x->Array.length > len
+          ? Belt.Result.Error(ArrayTooShortError) : Belt.Result.Ok(Some(x))
       | x => x,
     );
 
@@ -339,25 +361,35 @@ module Chat = {
     /* no validation specified for this message */
     let validate = x => Future.value(Belt.Result.Ok(x));
 
-    [@bs.deriving abstract]
-    type codec = {
-      encode: (t, justNull, justNull) => byteBuffer,
-      decode: (Node.buffer, justNull, justNull) => t,
-    };
+    type codec;
+    type intermediateMessageObject;
+
+    [@bs.send]
+    external encode:
+      (codec, intermediateMessageObject, justNull, justNull) => byteBuffer =
+      "";
+    [@bs.send]
+    external decode:
+      (codec, Node.buffer, justNull, justNull) => intermediateMessageObject =
+      "";
+    [@bs.send]
+    external fromObject: (codec, t) => intermediateMessageObject = "";
+    [@bs.send]
+    external toObject:
+      (codec, intermediateMessageObject, protobufjsToObjectOptions) => t =
+      "";
 
     [@bs.get] external codec: grpcProtoHandle => codec = "MessageReply";
 
     let codec = myProtoHandle->codec;
 
-    let encode = codec->encodeGet;
-    let decode = codec->decodeGet;
-
     let encode = x =>
-      x
-      ->(encode(Js.Nullable.undefined, Js.Nullable.undefined))
+      (x |> fromObject(codec))
+      ->encode(codec, _, Js.Nullable.undefined, Js.Nullable.undefined)
       ->bufferOfByteBuffer;
     let decode = x =>
-      x->(decode(Js.Nullable.undefined, Js.Nullable.undefined));
+      decode(codec, x, Js.Nullable.undefined, Js.Nullable.undefined)
+      ->toObject(codec, _, myProtobufjsToObjectOptions);
   };
   module Urgency = {
     /* fileName = "undefined" */
@@ -382,12 +414,38 @@ module Chat = {
             {j|bs-grpc encountered invalid Urgency enum value $x|j},
           ),
         );
+    /** convert a grpc symbolic enum string to its Urgency.t counterpart; internal */
+    let urgencyOfString =
+      fun
+      | "URGENCY_NORMAL" => UrgencyNormal
+      | "URGENCY_URGENT" => UrgencyUrgent
+      | "URGENCY_RELAXED" => UrgencyRelaxed
+
+      | x =>
+        raise(
+          BsGrpcDecoderError(
+            {j|bs-grpc encountered invalid Urgency enum value $x|j},
+          ),
+        );
     /** convert a Urgency.t to its the grpc enum ordinal counterpart; internal */
     let intOfUrgency =
       fun
       | UrgencyNormal => 0
       | UrgencyUrgent => 1
-      | UrgencyRelaxed => 2;
+      | UrgencyRelaxed => 2
+
+      | x =>
+        raise(
+          BsGrpcDecoderError(
+            {j|bs-grpc encountered invalid Urgency enum value $x|j},
+          ),
+        );
+    /** convert a Urgency.t to its the grpc symbolic enum string counterpart; internal */
+    let stringOfUrgency =
+      fun
+      | UrgencyNormal => "URGENCY_NORMAL"
+      | UrgencyUrgent => "URGENCY_URGENT"
+      | UrgencyRelaxed => "URGENCY_RELAXED";
   };
   module MessageRequest = {
     /* fileName = "undefined" */
@@ -400,19 +458,19 @@ module Chat = {
       [@bs.optional]
       text: string,
       [@bs.optional]
-      urgency: int,
+      urgency: string,
     };
     /** message constructor (shadows the deriving abstract constructor) */
     let t = (~channel=?, ~text=?, ~urgency=?, ()) =>
       t(
         ~channel?,
         ~text?,
-        ~urgency=?(Validation.optionMap @@ Urgency.intOfUrgency) @@ urgency,
+        ~urgency=?(Validation.optionMap @@ Urgency.stringOfUrgency) @@ urgency,
         (),
       );
     /* enum converting getter */
     let urgencyGet =
-      Validation.optionMap @@ Urgency.urgencyOfInt << urgencyGet;
+      Validation.optionMap @@ Urgency.urgencyOfString << urgencyGet;
     /* safe message constructor (may replace t()) */
     let make = (~channel=?, ~text=?, ~urgency=?, ()) =>
       t(~channel?, ~text?, ~urgency?, ());
@@ -420,25 +478,35 @@ module Chat = {
     /* no validation specified for this message */
     let validate = x => Future.value(Belt.Result.Ok(x));
 
-    [@bs.deriving abstract]
-    type codec = {
-      encode: (t, justNull, justNull) => byteBuffer,
-      decode: (Node.buffer, justNull, justNull) => t,
-    };
+    type codec;
+    type intermediateMessageObject;
+
+    [@bs.send]
+    external encode:
+      (codec, intermediateMessageObject, justNull, justNull) => byteBuffer =
+      "";
+    [@bs.send]
+    external decode:
+      (codec, Node.buffer, justNull, justNull) => intermediateMessageObject =
+      "";
+    [@bs.send]
+    external fromObject: (codec, t) => intermediateMessageObject = "";
+    [@bs.send]
+    external toObject:
+      (codec, intermediateMessageObject, protobufjsToObjectOptions) => t =
+      "";
 
     [@bs.get] external codec: grpcProtoHandle => codec = "MessageRequest";
 
     let codec = myProtoHandle->codec;
 
-    let encode = codec->encodeGet;
-    let decode = codec->decodeGet;
-
     let encode = x =>
-      x
-      ->(encode(Js.Nullable.undefined, Js.Nullable.undefined))
+      (x |> fromObject(codec))
+      ->encode(codec, _, Js.Nullable.undefined, Js.Nullable.undefined)
       ->bufferOfByteBuffer;
     let decode = x =>
-      x->(decode(Js.Nullable.undefined, Js.Nullable.undefined));
+      decode(codec, x, Js.Nullable.undefined, Js.Nullable.undefined)
+      ->toObject(codec, _, myProtobufjsToObjectOptions);
   };
   module ChatService = {
     /* fileName = "undefined" */
@@ -507,16 +575,17 @@ module Chat = {
         /** invoke an rpc using futures */
         let invokeFuture = (client, input) =>
           Future.make(resolve =>
-            invoke(client, input, (err, res) =>
+            invoke(client, input, (err, res)
               /* note: isNullable means "is nullish" */
-              if (err->Js.Nullable.isNullable) {
-                /* no error */
-                resolve(Belt.Result.Ok(res));
-              } else {
-                /* error */
-                resolve(Belt.Result.Error(err));
-              }
-            )
+              =>
+                if (err->Js.Nullable.isNullable) {
+                  /* no error */
+                  resolve(Belt.Result.Ok(res));
+                } else {
+                  /* error */
+                  resolve(Belt.Result.Error(err));
+                }
+              )
           );
         /** invoke an rpc using promises */
         let invokePromise = (client, input) =>

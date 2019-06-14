@@ -1,4 +1,4 @@
-/*eslint-disable block-scoped-var, id-length, no-control-regex, no-magic-numbers, no-prototype-builtins, no-redeclare, no-shadow, no-var, sort-vars*/
+/*eslint-disable block-scoped-var, no-redeclare, no-control-regex, no-prototype-builtins*/
 (function(global, factory) { /* global define, require, module */
 
     /* AMD */ if (typeof define === 'function' && define.amd)
@@ -7411,13 +7411,7 @@
                         } else
                             object.negativeIntValue = options.longs === String ? "0" : 0;
                         object.doubleValue = 0;
-                        if (options.bytes === String)
-                            object.stringValue = "";
-                        else {
-                            object.stringValue = [];
-                            if (options.bytes !== Array)
-                                object.stringValue = $util.newBuffer(object.stringValue);
-                        }
+                        object.stringValue = options.bytes === String ? "" : [];
                         object.aggregateValue = "";
                     }
                     if (message.name && message.name.length) {
